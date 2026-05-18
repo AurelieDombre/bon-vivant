@@ -1,0 +1,13 @@
+.venv/ 
+backend/.venv/ 
+node_modules/ 
+frontend/node_modules/ 
+data/raw/ 
+data/processed/ 
+backend/models/ 
+*.gguf 
+*.bin 
+*.ckpt 
+mlruns/ 
+pycache/ 
+.DS_Store EOL
