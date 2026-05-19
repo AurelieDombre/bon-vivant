@@ -44,3 +44,27 @@ class ChatResponse(BaseModel):
 
     # Indique si le message doit etre remonte a un humain.
     escalate_to_human: bool
+
+class ImageRequest(BaseModel):
+    """
+    Corps JSON attendu par la route POST /image/analyze.
+
+    Exemple:
+    {
+        "image_path": "C:\\mon-projet\\tests\\photo.jpg"
+    }
+    """
+
+    image_path: str
+
+class ImageResponse(BaseModel):
+    """
+    Corps JSON renvoye apres analyse d'une image.
+
+    Exemple:
+    {
+        "description": "On voit une bouteille de vin sur une table..."
+    }
+    """
+
+    description: str

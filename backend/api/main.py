@@ -8,15 +8,23 @@ Le flux principal est le suivant :
 2. On regarde d'abord si le message correspond a un produit connu
 3. Si oui, on repond avec la logique metier locale
 4. Sinon, on delegue la reponse a Ollama
+
+Ce fichier contient aussi les routes d'analyse d'image :
+- une route qui recoit un vrai fichier image
+- une route qui recoit simplement un chemin deja present sur le disque
 """
 
-from fastapi import FastAPI
+import os
+import tempfile
+
+from fastapi import FastAPI, UploadFile, File
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.schemas import ChatRequest, ChatResponse
+from api.schemas import ChatRequest, ChatResponse, ImageRequest, ImageResponse
 from core.llm_client import LLMClient
 from core.services import analyze_sentiment, get_product_info
+from core.vision_client import analyze_image
 
 # Liste des origines autorisees a appeler l'API depuis le navigateur.
 # Ici on autorise le serveur Vite local du frontend.
@@ -123,3 +131,42 @@ async def chat_endpoint(request: ChatRequest):
         sentiment=sentiment,
         escalate_to_human=escalate
     )
+
+@app.post("/chat/photo")
+async def chat_photo(file: UploadFile = File(...)):
+    """
+    Recoit une image envoyee directement par le client puis la fait analyser.
+
+    Cette route est utile quand on envoie un vrai fichier .jpg
+    en multipart/form-data depuis un formulaire ou un outil de test.
+    """
+    # On lit d'abord le contenu binaire du fichier envoye.
+    content = await file.read()
+
+    # On cree un fichier temporaire compatible avec Windows et Linux.
+    # C'est plus robuste qu'un chemin fixe comme /tmp/...
+    suffix = os.path.splitext(file.filename or "")[1] or ".jpg"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+        temp_file.write(content)
+        path = temp_file.name
+
+    try:
+        # Le client vision attend un chemin local vers l'image.
+        desc = analyze_image(path)
+        return {"description": desc}
+    finally:
+        # On supprime le fichier temporaire apres usage pour garder
+        # un disque propre.
+        if os.path.exists(path):
+            os.remove(path)
+
+@app.post("/image/analyze", response_model=ImageResponse)
+async def analyze_image_endpoint(request: ImageRequest):
+    """
+    Analyse une image deja presente sur le disque.
+
+    Cette route est pratique pour les tests du cours :
+    on met une image dans le dossier tests puis on envoie son chemin absolu.
+    """
+    description = analyze_image(request.image_path)
+    return ImageResponse(description=description)
