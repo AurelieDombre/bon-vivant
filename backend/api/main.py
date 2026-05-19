@@ -9,34 +9,37 @@ Le flux principal est le suivant :
 3. Si oui, on repond avec la logique metier locale
 4. Sinon, on delegue la reponse a Ollama
 
-Ce fichier contient aussi les routes d'analyse d'image :
-- une route qui recoit un vrai fichier image
-- une route qui recoit simplement un chemin deja present sur le disque
+Ce fichier contient aussi :
+- des routes d'analyse d'image
+- une route de chat vocal basee sur un fichier audio envoye par le client
 """
 
 import os
 import tempfile
 
-from fastapi import FastAPI, UploadFile, File
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
-from api.schemas import ChatRequest, ChatResponse, ImageRequest, ImageResponse
+from api.schemas import (
+    ChatRequest,
+    ChatResponse,
+    ImageRequest,
+    ImageResponse,
+    VoiceResponse,
+)
 from core.llm_client import LLMClient
 from core.services import analyze_sentiment, get_product_info
 from core.vision_client import analyze_image
+from core.voice_service import USE_DEMO_VOICE, speak_text, transcribe_audio
 
-# Liste des origines autorisees a appeler l'API depuis le navigateur.
-# Ici on autorise le serveur Vite local du frontend.
+
 origins = [
     "http://localhost:5173",
 ]
 
-# Creation de l'application FastAPI.
 app = FastAPI()
-
-# Ajout du middleware CORS.
-# Sans lui, le navigateur bloquerait les appels du frontend React vers l'API.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -45,8 +48,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Instance unique du client LLM.
-# On la cree une seule fois au demarrage pour la reutiliser ensuite.
 llm_client = LLMClient()
 
 
@@ -54,40 +55,20 @@ llm_client = LLMClient()
 def home():
     """
     Route de test simple.
-
-    Elle permet de verifier rapidement que l'API repond.
     """
-    return {
-        "message": "API chatbot OK"
-    }
+    return {"message": "API chatbot OK"}
 
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     """
-    Route principale du chatbot.
-
-    Entree :
-    - request.user_message : texte tape par l'utilisateur
-
-    Sortie :
-    - un objet ChatResponse contenant une recommandation
-
-    Strategie :
-    - on tente d'abord la logique locale basee sur les produits du JSON
-    - si rien n'est trouve, on construit un prompt pour Ollama
+    Route principale du chatbot texte.
     """
-
-    # On essaie d'abord de repondre avec les regles metier locales.
-    # Exemple : "Je veux du brie" => reponse basee sur products.json.
     service_response = get_product_info(request.user_message)
 
     if service_response:
         recommendation = service_response
     else:
-        # L'appel a Ollama est bloquant.
-        # run_in_threadpool permet de ne pas bloquer la boucle asynchrone
-        # de FastAPI pendant l'execution du modele.
         prompt = (
             "Tu es un assistant qui recommande des accords mets et vins. "
             "Reponds uniquement en francais. "
@@ -100,19 +81,9 @@ async def chat_endpoint(request: ChatRequest):
             prompt
         )
 
-    # Analyse de sentiment du message utilisateur.
-    # On recupere :
-    # - un label : positive / negative / neutral
-    # - un score de confiance du modele
     sentiment, score = analyze_sentiment(request.user_message)
-
-    # Regle metier d'escalade :
-    # si le message est detecte comme negatif avec une confiance elevee,
-    # on indique qu'un humain devrait potentiellement reprendre la main.
     escalate = (sentiment == "negative" and score > 0.75)
 
-    # Logs simples visibles dans le terminal du backend.
-    # C'est pratique pendant l'apprentissage pour observer le comportement.
     if escalate:
         print(
             f'[ESCALADE] Message critique detecte : '
@@ -132,41 +103,125 @@ async def chat_endpoint(request: ChatRequest):
         escalate_to_human=escalate
     )
 
+
 @app.post("/chat/photo")
 async def chat_photo(file: UploadFile = File(...)):
     """
     Recoit une image envoyee directement par le client puis la fait analyser.
-
-    Cette route est utile quand on envoie un vrai fichier .jpg
-    en multipart/form-data depuis un formulaire ou un outil de test.
     """
-    # On lit d'abord le contenu binaire du fichier envoye.
     content = await file.read()
 
-    # On cree un fichier temporaire compatible avec Windows et Linux.
-    # C'est plus robuste qu'un chemin fixe comme /tmp/...
     suffix = os.path.splitext(file.filename or "")[1] or ".jpg"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
         temp_file.write(content)
         path = temp_file.name
 
     try:
-        # Le client vision attend un chemin local vers l'image.
         desc = analyze_image(path)
         return {"description": desc}
     finally:
-        # On supprime le fichier temporaire apres usage pour garder
-        # un disque propre.
         if os.path.exists(path):
             os.remove(path)
+
 
 @app.post("/image/analyze", response_model=ImageResponse)
 async def analyze_image_endpoint(request: ImageRequest):
     """
     Analyse une image deja presente sur le disque.
-
-    Cette route est pratique pour les tests du cours :
-    on met une image dans le dossier tests puis on envoie son chemin absolu.
     """
     description = analyze_image(request.image_path)
     return ImageResponse(description=description)
+
+
+@app.post("/voice-chat", response_model=VoiceResponse)
+async def voice_chat(
+    background_tasks: BackgroundTasks,
+    audio: UploadFile = File(...),
+):
+    """
+    Recoit un fichier audio, le transcrit, envoie le texte au chatbot
+    puis genere un fichier de reponse audio.
+
+    Limite importante actuelle :
+    - la transcription supporte les fichiers WAV
+    - un .ogg ne peut pas etre traite tel quel sans conversion
+    """
+    if USE_DEMO_VOICE:
+        demo_transcript = "Bonjour, ceci est une transcription simulee."
+        demo_ai_answer = "Voici une reponse IA simulee par le mode demo."
+        demo_audio_filename = "demo.wav"
+        demo_path = os.path.join(tempfile.gettempdir(), demo_audio_filename)
+
+        with open(demo_path, "wb") as f:
+            f.write(b"\x00\x00")
+
+        return VoiceResponse(
+            transcript=demo_transcript,
+            ai_answer=demo_ai_answer,
+            audio_filename=demo_audio_filename,
+            audio_url=f"/voice-audio/{demo_audio_filename}"
+        )
+
+    # On garde l'extension du fichier envoye pour pouvoir signaler
+    # clairement les formats non pris en charge.
+    suffix = os.path.splitext(audio.filename or "")[1].lower()
+
+    if suffix != ".wav":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Le pipeline voix actuel attend un fichier .wav. "
+                "Le fichier recu est en format "
+                f"'{suffix or 'inconnu'}'. "
+                "Ton .ogg doit etre converti en .wav avant transcription."
+            ),
+        )
+
+    temp_in = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+    content = await audio.read()
+    temp_in.write(content)
+    temp_in.flush()
+    temp_in.close()
+
+    try:
+        transcribed_text = transcribe_audio(temp_in.name)
+
+        prompt = (
+            f"L'utilisateur dit : {transcribed_text}. "
+            "Reponds uniquement en francais. "
+            "Que recommandes-tu comme vin ?"
+        )
+        ai_response = await run_in_threadpool(llm_client.complete, prompt)
+
+        temp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+        temp_out.close()
+
+        speak_text(ai_response, temp_out.name)
+
+        background_tasks.add_task(os.remove, temp_in.name)
+
+        filename = os.path.basename(temp_out.name)
+        return VoiceResponse(
+            transcript=transcribed_text,
+            ai_answer=ai_response,
+            audio_filename=filename,
+            audio_url=f"/voice-audio/{filename}"
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur pendant le traitement vocal : {exc}"
+        ) from exc
+
+
+@app.get("/voice-audio/{filename}")
+async def get_voice_audio(filename: str):
+    """
+    Sert un fichier audio genere par la route /voice-chat.
+    """
+    path = os.path.join(tempfile.gettempdir(), filename)
+
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Fichier audio introuvable.")
+
+    return FileResponse(path, media_type="audio/wav", filename=filename)

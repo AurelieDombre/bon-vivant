@@ -39,11 +39,9 @@ class ChatResponse(BaseModel):
     """
 
     recommendation: str
-    # Sentiment detecte sur le message utilisateur.
     sentiment: str
-
-    # Indique si le message doit etre remonte a un humain.
     escalate_to_human: bool
+
 
 class ImageRequest(BaseModel):
     """
@@ -57,6 +55,7 @@ class ImageRequest(BaseModel):
 
     image_path: str
 
+
 class ImageResponse(BaseModel):
     """
     Corps JSON renvoye apres analyse d'une image.
@@ -68,3 +67,22 @@ class ImageResponse(BaseModel):
     """
 
     description: str
+
+
+class VoiceResponse(BaseModel):
+    """
+    Corps JSON renvoye par la route POST /voice-chat.
+
+    Exemple:
+    {
+        "transcript": "bonjour",
+        "ai_answer": "Je te conseille un vin blanc...",
+        "audio_filename": "reponse.wav",
+        "audio_url": "/voice-audio/reponse.wav"
+    }
+    """
+
+    transcript: str
+    ai_answer: str
+    audio_filename: str | None = None
+    audio_url: str | None = None
