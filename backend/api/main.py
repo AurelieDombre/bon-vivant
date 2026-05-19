@@ -11,11 +11,12 @@ Le flux principal est le suivant :
 """
 
 from fastapi import FastAPI
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.schemas import ChatRequest, ChatResponse
 from core.llm_client import LLMClient
-from core.services import get_product_info
+from core.services import analyze_sentiment, get_product_info
 
 # Liste des origines autorisees a appeler l'API depuis le navigateur.
 # Ici on autorise le serveur Vite local du frontend.
@@ -74,17 +75,51 @@ async def chat_endpoint(request: ChatRequest):
     service_response = get_product_info(request.user_message)
 
     if service_response:
-        return ChatResponse(recommendation=service_response)
+        recommendation = service_response
+    else:
+        # L'appel a Ollama est bloquant.
+        # run_in_threadpool permet de ne pas bloquer la boucle asynchrone
+        # de FastAPI pendant l'execution du modele.
+        prompt = (
+            "Tu es un assistant qui recommande des accords mets et vins. "
+            "Reponds uniquement en francais. "
+            f"L'utilisateur demande : {request.user_message}. "
+            "Que recommandes-tu comme vin ?"
+        )
 
-    # Si aucun produit connu n'est detecte, on bascule vers le modele.
-    prompt = (
-        "Tu es un assistant qui recommande des accords mets et vins. "
-        "Reponds en francais de facon concise et utile. "
-        f"Question utilisateur : {request.user_message}"
-    )
+        recommendation = await run_in_threadpool(
+            llm_client.complete,
+            prompt
+        )
 
-    response = llm_client.complete(prompt)
+    # Analyse de sentiment du message utilisateur.
+    # On recupere :
+    # - un label : positive / negative / neutral
+    # - un score de confiance du modele
+    sentiment, score = analyze_sentiment(request.user_message)
+
+    # Regle metier d'escalade :
+    # si le message est detecte comme negatif avec une confiance elevee,
+    # on indique qu'un humain devrait potentiellement reprendre la main.
+    escalate = (sentiment == "negative" and score > 0.75)
+
+    # Logs simples visibles dans le terminal du backend.
+    # C'est pratique pendant l'apprentissage pour observer le comportement.
+    if escalate:
+        print(
+            f'[ESCALADE] Message critique detecte : '
+            f'"{request.user_message}" '
+            f'(sentiment : {sentiment}, score : {score})'
+        )
+    else:
+        print(
+            f'[INFO] Message traite : '
+            f'"{request.user_message}" '
+            f'(sentiment : {sentiment}, score : {score})'
+        )
 
     return ChatResponse(
-        recommendation=response
+        recommendation=recommendation,
+        sentiment=sentiment,
+        escalate_to_human=escalate
     )

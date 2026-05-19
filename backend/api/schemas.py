@@ -32,8 +32,15 @@ class ChatResponse(BaseModel):
 
     Exemple:
     {
-        "recommendation": "Pour Brie, je te recommande..."
+        "recommendation": "Pour Brie, je te recommande...",
+        "sentiment": "neutral",
+        "escalate_to_human": false
     }
     """
 
     recommendation: str
+    # Sentiment detecte sur le message utilisateur.
+    sentiment: str
+
+    # Indique si le message doit etre remonte a un humain.
+    escalate_to_human: bool
