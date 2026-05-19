@@ -11,3 +11,5 @@ backend/models/
 mlruns/ 
 pycache/ 
 .DS_Store EOL
+.idea
+/.idea/
