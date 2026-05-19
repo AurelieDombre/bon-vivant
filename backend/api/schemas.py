@@ -10,6 +10,8 @@ FastAPI s'appuie dessus pour :
 - documenter automatiquement l'API dans /docs
 """
 
+from typing import List
+
 from pydantic import BaseModel
 
 
@@ -86,3 +88,29 @@ class VoiceResponse(BaseModel):
     ai_answer: str
     audio_filename: str | None = None
     audio_url: str | None = None
+
+
+class UpsellRequest(BaseModel):
+    """
+    Corps JSON attendu par la route POST /upsell.
+
+    Exemple:
+    {
+        "cart_items": ["Brunch Estival", "Pinot Noir"]
+    }
+    """
+
+    cart_items: List[str]
+
+
+class UpsellResponse(BaseModel):
+    """
+    Corps JSON renvoye par la route POST /upsell.
+
+    Exemple:
+    {
+        "suggestion": "Fromage de Chevre"
+    }
+    """
+
+    suggestion: str

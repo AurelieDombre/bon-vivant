@@ -1,0 +1,2 @@
+You are an assistant IA. A customer has these items in the cart: {cart_items}.
+Suggest one complementary product and briefly explain why.

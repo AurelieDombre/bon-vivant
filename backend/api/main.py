@@ -28,9 +28,11 @@ from api.schemas import (
     ImageRequest,
     ImageResponse,
     VoiceResponse,
+    UpsellResponse,
+    UpsellRequest,
 )
 from core.llm_client import LLMClient
-from core.services import analyze_sentiment, get_product_info
+from core.services import analyze_sentiment, get_product_info, get_upsell
 from core.vision_client import analyze_image
 from core.voice_service import USE_DEMO_VOICE, speak_text, transcribe_audio
 
@@ -39,7 +41,12 @@ origins = [
     "http://localhost:5173",
 ]
 
+# Creation de l'application FastAPI.
+# C'est cet objet `app` que uvicorn charge pour lancer le backend.
 app = FastAPI()
+
+# Middleware CORS.
+# Il autorise le frontend local a appeler l'API depuis le navigateur.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -48,6 +55,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Instance unique du client LLM.
+# On la cree une seule fois au demarrage puis on la reutilise.
 llm_client = LLMClient()
 
 
@@ -55,6 +64,8 @@ llm_client = LLMClient()
 def home():
     """
     Route de test simple.
+
+    Elle permet de verifier rapidement que l'API repond bien.
     """
     return {"message": "API chatbot OK"}
 
@@ -63,12 +74,24 @@ def home():
 async def chat_endpoint(request: ChatRequest):
     """
     Route principale du chatbot texte.
+
+    Entree :
+    - request.user_message : texte saisi par l'utilisateur
+
+    Sortie :
+    - une recommandation
+    - un sentiment detecte
+    - un indicateur d'escalade vers un humain
     """
+    # Premiere etape :
+    # on essaie de repondre avec la logique metier locale basee sur le JSON.
     service_response = get_product_info(request.user_message)
 
     if service_response:
         recommendation = service_response
     else:
+        # Si la logique locale ne suffit pas, on construit un prompt
+        # pour interroger le modele.
         prompt = (
             "Tu es un assistant qui recommande des accords mets et vins. "
             "Reponds uniquement en francais. "
@@ -76,14 +99,23 @@ async def chat_endpoint(request: ChatRequest):
             "Que recommandes-tu comme vin ?"
         )
 
+        # L'appel a Ollama est bloquant.
+        # `run_in_threadpool` evite de bloquer la boucle async de FastAPI.
         recommendation = await run_in_threadpool(
             llm_client.complete,
             prompt
         )
 
+    # Deuxieme etape :
+    # on analyse le ton du message utilisateur.
     sentiment, score = analyze_sentiment(request.user_message)
+
+    # Regle metier simple d'escalade :
+    # si le message est negatif avec une forte confiance,
+    # on signale qu'un humain pourrait devoir intervenir.
     escalate = (sentiment == "negative" and score > 0.75)
 
+    # Logs visibles dans le terminal pendant les tests.
     if escalate:
         print(
             f'[ESCALADE] Message critique detecte : '
@@ -109,17 +141,22 @@ async def chat_photo(file: UploadFile = File(...)):
     """
     Recoit une image envoyee directement par le client puis la fait analyser.
     """
+    # On lit le contenu binaire complet de l'image.
     content = await file.read()
 
+    # On preserve l'extension d'origine pour creer un fichier temporaire
+    # du bon type sur le disque.
     suffix = os.path.splitext(file.filename or "")[1] or ".jpg"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
         temp_file.write(content)
         path = temp_file.name
 
     try:
+        # Le client vision travaille ici a partir d'un chemin local.
         desc = analyze_image(path)
         return {"description": desc}
     finally:
+        # On supprime le fichier temporaire apres analyse.
         if os.path.exists(path):
             os.remove(path)
 
@@ -128,6 +165,9 @@ async def chat_photo(file: UploadFile = File(...)):
 async def analyze_image_endpoint(request: ImageRequest):
     """
     Analyse une image deja presente sur le disque.
+
+    Cette route est pratique pour les tests :
+    on place une image dans le dossier `tests` puis on envoie son chemin.
     """
     description = analyze_image(request.image_path)
     return ImageResponse(description=description)
@@ -147,6 +187,9 @@ async def voice_chat(
     - un .ogg ne peut pas etre traite tel quel sans conversion
     """
     if USE_DEMO_VOICE:
+        # Mode demo :
+        # on renvoie une transcription et une reponse fictives
+        # pour tester le flux sans pipeline audio complet.
         demo_transcript = "Bonjour, ceci est une transcription simulee."
         demo_ai_answer = "Voici une reponse IA simulee par le mode demo."
         demo_audio_filename = "demo.wav"
@@ -177,6 +220,8 @@ async def voice_chat(
             ),
         )
 
+    # On enregistre l'audio temporairement sur le disque,
+    # car la transcription travaille ici a partir d'un fichier local.
     temp_in = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
     content = await audio.read()
     temp_in.write(content)
@@ -184,20 +229,27 @@ async def voice_chat(
     temp_in.close()
 
     try:
+        # 1. Transcription de l'audio vers le texte.
         transcribed_text = transcribe_audio(temp_in.name)
 
+        # 2. Construction du prompt pour le chatbot texte.
         prompt = (
             f"L'utilisateur dit : {transcribed_text}. "
             "Reponds uniquement en francais. "
             "Que recommandes-tu comme vin ?"
         )
+
+        # 3. Generation de la reponse texte par le LLM.
         ai_response = await run_in_threadpool(llm_client.complete, prompt)
 
+        # 4. Preparation du futur fichier audio de sortie.
         temp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         temp_out.close()
 
+        # 5. Synthese vocale de la reponse texte.
         speak_text(ai_response, temp_out.name)
 
+        # 6. Nettoyage du fichier d'entree une fois traite.
         background_tasks.add_task(os.remove, temp_in.name)
 
         filename = os.path.basename(temp_out.name)
@@ -208,6 +260,8 @@ async def voice_chat(
             audio_url=f"/voice-audio/{filename}"
         )
     except Exception as exc:
+        # En cas de plantage du pipeline voix, on renvoie une erreur HTTP
+        # lisible plutot qu'une exception brute.
         raise HTTPException(
             status_code=500,
             detail=f"Erreur pendant le traitement vocal : {exc}"
@@ -224,4 +278,11 @@ async def get_voice_audio(filename: str):
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Fichier audio introuvable.")
 
+    # FastAPI renvoie ici directement le fichier son au client.
     return FileResponse(path, media_type="audio/wav", filename=filename)
+
+
+@app.post("/upsell", response_model=UpsellResponse)
+async def upsell(request: UpsellRequest):
+    result = get_upsell(request.cart_items)
+    return UpsellResponse(**result)

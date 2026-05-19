@@ -23,6 +23,9 @@ import json
 import torch
 from transformers import pipeline
 
+from core.prompt_manager import load_prompt
+from llama_cpp import Llama
+
 
 # Active un mode de demonstration pour la logique produit.
 # Si USE_DEMO_TEXT=1 dans l'environnement, on renverra une reponse fictive.
@@ -34,10 +37,18 @@ USE_DEMO_SENTIMENT = os.environ.get(
     "0"
 ) == "1"
 
-
 # Au lancement du programme, le pipeline de sentiment n'est pas encore charge.
 # On le chargera seulement au premier besoin.
 _sentiment_pipeline = None
+
+
+PROMPT_UPSELL = 'upsell_prompt_v1.0.txt'
+MODEL_PATH = os.path.join(
+os.path.dirname(__file__),
+'..',
+'models',
+'mistral-7b-q4_k_m.gguf')
+llm = Llama(model_path=MODEL_PATH, n_gpu_layers=16, n_threads=4)
 
 
 # Construction du chemin du fichier JSON de produits.
@@ -47,7 +58,6 @@ DATASET_PATH = os.path.join(
     os.path.dirname(__file__),
     "../data/products.json"
 )
-
 
 def load_products():
     """
@@ -66,11 +76,9 @@ def load_products():
     with open(DATASET_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
 # Les donnees sont chargees une seule fois au demarrage.
 # Cela evite de rouvrir le fichier JSON a chaque requete.
 PRODUCTS_DATA = load_products()
-
 
 def find_product_by_name(query: str):
     """
@@ -211,3 +219,9 @@ def analyze_sentiment(text):
     score = result["score"]
 
     return label, score
+#-----Fonction upsell ----#
+def get_upsell(cart_items: list[str]) -> dict:
+    prompt_template = load_prompt(PROMPT_UPSELL)
+    prompt = prompt_template.replace("{cart_items}", ", ".join(cart_items))
+    result = llm(prompt, max_tokens=50)
+    return {"suggestion": result["choices"][0]["text"].strip()}
