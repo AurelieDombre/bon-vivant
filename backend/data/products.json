@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Brie",
+    "category": "Fromage",
+    "description": "Fromage crémeux au lait de vache."
+  },
+  {
+    "name": "Saumon",
+    "category": "Poisson",
+    "description": "Poisson gras riche en oméga 3."
+  }
+]
