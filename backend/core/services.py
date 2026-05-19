@@ -1,345 +1,213 @@
-# ==============================
-# IMPORTS
-# ==============================
+"""
+Fonctions metier du chatbot.
 
-# Permet de travailler avec :
-# - les fichiers
-# - les chemins
-# - les variables d'environnement
+Ce fichier contient la logique "locale", c'est-a-dire la partie qui ne depend
+pas directement d'un LLM. C'est ici qu'on :
+
+- charge les produits depuis le JSON
+- detecte quel produit est mentionne par l'utilisateur
+- genere une suggestion de vin
+- peut analyser le sentiment d'un texte
+
+L'idee importante :
+la route HTTP appelle ces fonctions, mais la logique metier reste separee.
+"""
+
+# Permet de lire les variables d'environnement et de manipuler les chemins.
 import os
 
-# Permet de lire les fichiers JSON
+# Permet de convertir le fichier products.json en objets Python.
 import json
 
-# Bibliothèque d'expressions régulières
-# (pas utilisée ici, mais importée)
-import re
-# framework de deep learning utilisé par HuggingFace Transformers
+# Importe les outils de machine learning utilises pour l'analyse de sentiment.
 import torch
-# HuggingFace Transformers
-# pipeline() permet d'utiliser facilement une IA pré-entraînée
 from transformers import pipeline
 
 
-
-# ==============================
-# VARIABLES D'ENVIRONNEMENT
-# ==============================
-
-# Lit une variable système nommée USE_DEMO_TEXT
-#
-# Si la variable vaut "1" :
-# -> USE_DEMO_TEXT = True
-#
-# Sinon :
-# -> False
-#
-# Exemple terminal :
-# export USE_DEMO_TEXT=1
+# Active un mode de demonstration pour la logique produit.
+# Si USE_DEMO_TEXT=1 dans l'environnement, on renverra une reponse fictive.
 USE_DEMO_TEXT = os.environ.get("USE_DEMO_TEXT", "0") == "1"
 
-
-# Même principe pour le mode démo sentiment
+# Meme idee pour la partie analyse de sentiment.
 USE_DEMO_SENTIMENT = os.environ.get(
     "USE_DEMO_SENTIMENT",
     "0"
 ) == "1"
 
 
-# ==============================
-# LAZY LOADING DU MODÈLE IA
-# ==============================
-
-# Au démarrage :
-# le pipeline IA n'est PAS chargé
-#
-# None = "vide"
-#
-# Le modèle sera chargé uniquement
-# quand on en aura besoin
+# Au lancement du programme, le pipeline de sentiment n'est pas encore charge.
+# On le chargera seulement au premier besoin.
 _sentiment_pipeline = None
 
 
-# ==============================
-# CHEMIN DU FICHIER JSON
-# ==============================
-
-# __file__
-# = chemin du fichier Python actuel
-#
-# os.path.dirname(__file__)
-# = dossier du fichier actuel
-#
-# "../data/products.json"
-# = remonte d'un dossier puis va dans data/
-#
-# os.path.join(...)
-# construit un chemin propre selon l'OS
+# Construction du chemin du fichier JSON de produits.
+# __file__ correspond au chemin de ce fichier Python.
+# On remonte ensuite vers ../data/products.json
 DATASET_PATH = os.path.join(
     os.path.dirname(__file__),
     "../data/products.json"
 )
 
 
-# ==============================
-# CHARGEMENT DES PRODUITS
-# ==============================
-
 def load_products():
     """
-    Ouvre le fichier JSON
-    et retourne les données Python.
+    Charge le fichier products.json et retourne la liste des produits.
+
+    Retour:
+    - une liste de dictionnaires Python
+
+    Exemple de produit:
+    {
+        "name": "Brie",
+        "category": "Fromage",
+        "description": "Fromage cremeux au lait de vache."
+    }
     """
-
-    # with open(...)
-    # ouvre le fichier en lecture
-    #
-    # "r" = read
-    # utf-8 = gestion des accents
     with open(DATASET_PATH, "r", encoding="utf-8") as f:
-
-        # json.load(f)
-        # transforme le JSON
-        # en objets Python
         return json.load(f)
 
 
-# Chargement immédiat des données
-#
-# Le fichier JSON est lu UNE seule fois
-# au démarrage du programme
+# Les donnees sont chargees une seule fois au demarrage.
+# Cela evite de rouvrir le fichier JSON a chaque requete.
 PRODUCTS_DATA = load_products()
 
 
-# ==============================
-# RECHERCHE D'UN PRODUIT
-# ==============================
-
 def find_product_by_name(query: str):
     """
-    Cherche un produit dans le message utilisateur.
-    """
+    Cherche si un produit connu apparait dans le message utilisateur.
 
-    # Passage en minuscules
-    # pour éviter les problèmes de casse
-    #
-    # Exemple :
-    # "BRIE" -> "brie"
+    Parametre:
+    - query: texte brut saisi par l'utilisateur
+
+    Retour:
+    - le dictionnaire du produit trouve
+    - ou None si aucun produit connu n'est present dans le texte
+    """
+    # On normalise en minuscules pour comparer sans se soucier de la casse.
     query = query.lower()
 
-    # Boucle sur tous les produits
     for product in PRODUCTS_DATA:
-
-        # Vérifie si le nom du produit
-        # est contenu dans le message
-        #
-        # Exemple :
-        # product["name"] = "Brie"
-        #
-        # query = "je veux du brie"
-        #
-        # => True
         if product["name"].lower() in query:
-
-            # On retourne le produit trouvé
             return product
 
-    # Aucun produit trouvé
     return None
 
 
-# ==============================
-# SUGGESTION DE VIN
-# ==============================
-
 def suggest_wine_for_product(product):
     """
-    Associe un type de produit
-    à un conseil de vin.
+    Retourne une suggestion de vin a partir de la categorie du produit.
+
+    Parametre:
+    - product: dictionnaire representant un produit
+
+    Retour:
+    - une phrase prete a etre affichee a l'utilisateur
     """
-
-    # Dictionnaire Python
-    #
-    # clé -> valeur
+    # Table de correspondance tres simple entre categorie et recommandation.
     pairing = {
-
-        "Fromage":
-            "Un vin blanc sec, type Sancerre ou Chablis.",
-
-        "Poisson":
-            "Un vin blanc fruité, type Sauvignon ou Chardonnay.",
-
-        "Charcuterie":
-            "Un vin rouge léger, type Pinot Noir.",
-
-        "Dessert":
-            "Un vin moelleux, type Sauternes."
+        "Fromage": "Un vin blanc sec, type Sancerre ou Chablis.",
+        "Poisson": "Un vin blanc fruite, type Sauvignon ou Chardonnay.",
+        "Charcuterie": "Un vin rouge leger, type Pinot Noir.",
+        "Dessert": "Un vin moelleux, type Sauternes."
     }
 
-    # .get()
-    #
-    # Cherche la catégorie
-    #
-    # Si elle n'existe pas :
-    # retourne le texte par défaut
+    # Si la categorie n'existe pas dans le dictionnaire, on utilise le message
+    # par defaut fourni en second argument de .get().
     suggestion = pairing.get(
         product["category"],
-        "Un vin adapté à ce plat, à voir selon vos goûts !"
+        "Un vin adapte a ce plat, a voir selon vos gouts !"
     )
 
-    # f-string
-    #
-    # Permet d'injecter des variables
-    # dans du texte
     return (
         f"Pour {product['name']}, "
         f"je te recommande : {suggestion}"
     )
 
 
-# ==============================
-# FONCTION PRINCIPALE
-# ==============================
-
 def get_product_info(user_message: str):
     """
-    Analyse le message utilisateur
-    et retourne une réponse adaptée.
+    Analyse le message utilisateur et choisit une reponse metier.
+
+    Cette fonction sert de point d'entree "intelligent" pour la logique locale.
+
+    Cas possibles:
+    - mode demo active -> reponse fictive
+    - aucun produit connu detecte -> None
+    - demande de description -> description du produit
+    - sinon -> suggestion de vin
     """
-
-    # MODE DEMO
-    #
-    # Permet de simuler une réponse
-    # sans exécuter la vraie logique
     if USE_DEMO_TEXT:
-
         return (
             "MODE DEMO : "
-            "Produit détecté + suggestion fictive."
+            "Produit detecte + suggestion fictive."
         )
 
-    # Recherche du produit
     product = find_product_by_name(user_message)
 
-    # Aucun produit trouvé
+    # Si aucun produit n'est trouve, on laisse l'appelant decider de la suite.
+    # Dans notre cas, l'API bascule ensuite vers le LLM.
     if not product:
         return None
 
-    # Message en minuscules
     message_lower = user_message.lower()
 
-    # any(...)
-    #
-    # Retourne True
-    # si AU MOINS une condition est vraie
-    #
-    # Ici :
-    # on cherche si le message
-    # demande une description du produit
+    # Si le message ressemble a une demande d'explication du produit,
+    # on renvoie sa description plutot qu'un accord vin.
     if any(x in message_lower for x in [
-
         "que contient",
         "description",
         "qu'y a-t-il dans",
         "c'est quoi",
         "qu'est-ce que"
-
     ]):
-
-        # Retourne la description du produit
         return (
             f"{product['name']} : "
             f"{product['description']}"
         )
 
-    # Sinon :
-    # retourne un conseil de vin
     return suggest_wine_for_product(product)
 
 
-# ==============================
-# ANALYSE DE SENTIMENT
-# ==============================
-
 def get_sentiment_pipeline():
     """
-    Charge le modèle HuggingFace
-    UNE seule fois.
+    Charge le pipeline HuggingFace d'analyse de sentiment si besoin.
 
-    Singleton + Lazy Loading
-    Evite de recharger après chaque requête
+    Pourquoi faire comme ca:
+    - le modele peut etre lourd a charger
+    - on evite de le recharger a chaque appel
+
+    Retour:
+    - le pipeline pret a etre utilise
     """
-
-    # On utilise la variable globale
     global _sentiment_pipeline
 
-    # Si le modèle n'est pas chargé
     if _sentiment_pipeline is None:
+        _sentiment_pipeline = pipeline("sentiment-analysis")
 
-        # Chargement du modèle IA
-        #
-        # sentiment-analysis
-        # = modèle de classification
-        #
-        # Il détecte :
-        # - positif
-        # - négatif
-        # - neutre
-        _sentiment_pipeline = pipeline(
-            "sentiment-analysis"
-        )
-
-    # Retourne le pipeline
     return _sentiment_pipeline
 
-
-# ==============================
-# ANALYSE D'UN TEXTE
-# ==============================
 
 def analyze_sentiment(text):
     """
     Analyse le sentiment d'un texte.
+
+    Parametre:
+    - text: texte a analyser
+
+    Retour:
+    - un tuple (label, score)
+      exemple: ("positive", 0.998)
     """
-
-    # MODE DEMO
     if USE_DEMO_SENTIMENT:
-
-        # Retourne un résultat fictif
         return "neutral", 0.5
 
-    # Récupération du pipeline IA
     pipe = get_sentiment_pipeline()
 
-    # Analyse du texte
-    #
-    # pipe(text)
-    # retourne une liste
-    #
-    # Exemple :
-    # [
-    #   {
-    #       "label": "POSITIVE",
-    #       "score": 0.998
-    #   }
-    # ]
-    #
-    # [0]
-    # récupère le premier résultat
+    # Le pipeline renvoie une liste de resultats.
+    # Ici on prend le premier, car on analyse une seule phrase a la fois.
     result = pipe(text)[0]
 
-    # Extraction du label
-    #
-    # .lower()
-    # transforme :
-    #
-    # "POSITIVE"
-    # ->
-    # "positive"
     label = result["label"].lower()
-
-    # Score de confiance du modèle
     score = result["score"]
 
-    # Retour final
     return label, score
