@@ -1,0 +1,6 @@
+outs:
+- md5: fe4ad551436887baaddb42329e900c23.dir
+  size: 70898967
+  nfiles: 14
+  hash: md5
+  path: vosk-model-small-en-us-0.15
