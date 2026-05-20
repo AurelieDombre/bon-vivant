@@ -10,6 +10,7 @@ Stack :
 - React / Vite/ Tailwind
 - Router,
 - Llama,
+- openAI
 - DVC
 - MLflow,
 - Docker

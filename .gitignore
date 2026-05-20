@@ -1,9 +1,12 @@
 .venv/ 
 backend/.venv/
-backend/data/vosk-model-small-en-us-0.15
+!/backend/data/vosk-model-small-en-us-0.15.dvc
+!/backend/data/.gitignore
 backend/.env
 /backend/.env
 *.env
+/backend/models/*
+!/backend/models/*.dvc
 node_modules/ 
 frontend/node_modules/ 
 data/raw/ 
@@ -17,3 +20,4 @@ pycache/
 .DS_Store EOL
 .idea
 /.idea/
+*.pyc
