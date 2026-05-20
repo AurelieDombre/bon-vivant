@@ -119,3 +119,9 @@ class UpsellResponse(BaseModel):
     """
 
     suggestion: str
+
+class NewsletterRequest(BaseModel):
+    interests: List[str]
+
+class NewsletterResponse(BaseModel):
+    newsletter: str

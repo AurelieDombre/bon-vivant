@@ -27,7 +27,10 @@ from core.prompt_manager import load_prompt
 from llama_cpp import Llama
 import requests
 
-# Active un mode de demonstration pour la logique produit.
+PROMPT_UPSELL = 'upsell_prompt_v1.0.txt'
+PROMPT_NEWSLETTER = "newsletter_v1.0.txt"
+
+# Active un mode de demonstration pour la logique "produit".
 # Si USE_DEMO_TEXT=1 dans l'environnement, on renverra une reponse fictive.
 USE_DEMO_TEXT = os.environ.get("USE_DEMO_TEXT", "0") == "1"
 
@@ -36,13 +39,13 @@ USE_DEMO_SENTIMENT = os.environ.get(
     "USE_DEMO_SENTIMENT",
     "0"
 ) == "1"
-
-# Au lancement du programme, le pipeline de sentiment n'est pas encore charge.
+# Au lancement du programme, le pipeline de sentiment n'est pas encore chargé.
 # On le chargera seulement au premier besoin.
 _sentiment_pipeline = None
 
+USE_DEMO_NEWS = os.environ.get("USE_DEMO_NEWS", "0") == "1"
 
-PROMPT_UPSELL = 'upsell_prompt_v1.0.txt'
+
 
 # Appel au model mistral dans ollama en local
 def ask_llm(prompt: str, max_tokens: int = 50):
@@ -250,3 +253,22 @@ def get_upsell(cart_items: list[str]) -> dict:
     return {
         "suggestion": suggestion.strip()
     }
+
+# ---- Newsletters -----#
+def generate_newsletter(interests: list[str]) -> str:
+    # Charge le template de prompt utilisé
+    prompt_template = load_prompt(PROMPT_NEWSLETTER)
+    #Remplace le placeholder su prompt par la liste d'intérêts de l'utilisateur
+    prompt = prompt_template.replace("{interests}", ", ".join(interests))
+
+    # Mode démo = renvoyer un faux texte sans appeler le modèle
+    if USE_DEMO_NEWS:
+        return (
+                "Actualités : Toutes les nouveautés sur " + ", ".join(interests) + ".\n"
+                   "Conseils : Découvrez nos astuces et nos conseils.\n"
+                   "Promotions : Offres spéciales réservées aux abonnés"
+        )
+    # Sinon on appelle le LLM
+    result = ask_llm(prompt, max_tokens=512)
+    return result.strip()
+

@@ -27,6 +27,9 @@ function Navbar() {
           <NavLink to="/upsell" className={linkClassName}>
             Upsell
           </NavLink>
+          <NavLink to="/newsletter" className={linkClassName}>
+            Newsletters
+          </NavLink>
         </nav>
       </div>
     </header>

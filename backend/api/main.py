@@ -30,9 +30,11 @@ from api.schemas import (
     VoiceResponse,
     UpsellResponse,
     UpsellRequest,
+    NewsletterResponse,
+    NewsletterRequest,
 )
 from core.llm_client import LLMClient
-from core.services import analyze_sentiment, get_product_info, get_upsell
+from core.services import analyze_sentiment, get_product_info, get_upsell, generate_newsletter
 from core.vision_client import analyze_image
 from core.voice_service import USE_DEMO_VOICE, speak_text, transcribe_audio
 
@@ -287,3 +289,8 @@ async def get_voice_audio(filename: str):
 async def upsell(request: UpsellRequest):
     result = get_upsell(request.cart_items)
     return UpsellResponse(**result)
+
+@app.post("/newsletter", response_model=NewsletterResponse)
+async def newsletter(request: NewsletterRequest):
+    text = generate_newsletter(request.interests)
+    return NewsletterResponse(newsletter=text)

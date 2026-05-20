@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import ChatPage from "./pages/ChatPage";
 import UpsellPage from "./pages/UpsellPage";
+import NewsletterPage from "./pages/NewsletterPage.jsx";
 
 
 function App() {
@@ -15,8 +16,9 @@ function App() {
 
         <main className="flex justify-center py-8">
           <Routes>
-            <Route path="/" element={<ChatPage />} />
-            <Route path="/upsell" element={<UpsellPage />} />
+            <Route path="/" element={<ChatPage/>} />
+            <Route path="/upsell" element={<UpsellPage/>} />
+            <Route path="/newsletter" element={<NewsletterPage/>} />
           </Routes>
         </main>
       </div>

@@ -1,0 +1,3 @@
+Génère une newsletter hebdomadaire en Français, qui comporte 3 sections : actualités, conseils, promotions.
+Le lecteur est intéressé par : {interests}.
+Rédige des titres accrocheurs et des paragraphes courts.
