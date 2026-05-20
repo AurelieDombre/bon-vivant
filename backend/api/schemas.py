@@ -1,6 +1,11 @@
 """
 Schemas Pydantic utilises par l'API.
 
+Pydantic garantit :
+- la structure des données,
+- la validation automatique,
+- des échanges frontend/backend fiables.
+
 Un schema sert a definir clairement :
 - ce que l'API attend en entree
 - ce qu'elle renvoie en sortie

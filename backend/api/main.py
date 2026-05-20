@@ -39,6 +39,7 @@ from core.voice_service import USE_DEMO_VOICE, speak_text, transcribe_audio
 
 origins = [
     "http://localhost:5173",
+    'http://localhost:8000'
 ]
 
 # Creation de l'application FastAPI.

@@ -25,7 +25,7 @@ from transformers import pipeline
 
 from core.prompt_manager import load_prompt
 from llama_cpp import Llama
-
+import requests
 
 # Active un mode de demonstration pour la logique produit.
 # Si USE_DEMO_TEXT=1 dans l'environnement, on renverra une reponse fictive.
@@ -43,13 +43,25 @@ _sentiment_pipeline = None
 
 
 PROMPT_UPSELL = 'upsell_prompt_v1.0.txt'
-MODEL_PATH = os.path.join(
-os.path.dirname(__file__),
-'..',
-'models',
-'mistral-7b-q4_k_m.gguf')
-llm = Llama(model_path=MODEL_PATH, n_gpu_layers=16, n_threads=4)
 
+# Appel au model mistral dans ollama en local
+def ask_llm(prompt: str, max_tokens: int = 50):
+
+    response = requests.post(
+        "http://localhost:11434/api/generate",
+        json={
+            "model": "mistral",
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "num_predict": max_tokens
+            }
+        }
+    )
+
+    response.raise_for_status()
+
+    return response.json()["response"]
 
 # Construction du chemin du fichier JSON de produits.
 # __file__ correspond au chemin de ce fichier Python.
@@ -219,9 +231,22 @@ def analyze_sentiment(text):
     score = result["score"]
 
     return label, score
+
 #-----Fonction upsell ----#
 def get_upsell(cart_items: list[str]) -> dict:
+
+    # Charge le template de prompt utilisé pour demander une suggestion d'upsell au modèle
     prompt_template = load_prompt(PROMPT_UPSELL)
+
+    # Remplace le placeholder {cart_items} par la liste des articles du panier,
+    # convertie en chaîne de caractères séparée par des virgules
     prompt = prompt_template.replace("{cart_items}", ", ".join(cart_items))
-    result = llm(prompt, max_tokens=50)
-    return {"suggestion": result["choices"][0]["text"].strip()}
+
+    # Appel Ollama
+    suggestion = ask_llm(prompt)
+
+    # Récupère le texte de la première réponse, supprime les espaces inutiles,
+    # puis le retourne dans un dictionnaire
+    return {
+        "suggestion": suggestion.strip()
+    }
