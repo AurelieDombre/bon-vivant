@@ -24,8 +24,10 @@ import torch
 from transformers import pipeline
 
 from core.prompt_manager import load_prompt
-from llama_cpp import Llama
-import requests
+
+from core.toggle import toggle
+from openai import OpenAI
+_openai_client = None
 
 PROMPT_UPSELL = 'upsell_prompt_v1.0.txt'
 PROMPT_NEWSLETTER = "newsletter_v1.0.txt"
@@ -45,26 +47,41 @@ _sentiment_pipeline = None
 
 USE_DEMO_NEWS = os.environ.get("USE_DEMO_NEWS", "0") == "1"
 
+# Récupere la cle secret pour l'API OpenAI
+def _get_openai():
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    return _openai_client
+
+#  choisir le modèle
+def _openai_text_model() -> str:
+    return os.getenv("OPENAI_TEXT_MODEL", "gpt-4o-mini")
 
 
-# Appel au model mistral dans ollama en local
-def ask_llm(prompt: str, max_tokens: int = 50):
+# Appel au model openai via API platform
+def ask_llm(prompt: str, max_tokens: int = 200):
 
-    response = requests.post(
-        "http://localhost:11434/api/generate",
-        json={
-            "model": "mistral",
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "num_predict": max_tokens
+    client = _get_openai()
+
+    response = client.chat.completions.create(
+        model=_openai_text_model(),
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Tu es un assistant expert en gastronomie et marketing."
+                )
+            },
+            {
+                "role": "user",
+                "content": prompt
             }
-        }
+        ],
+        max_tokens=max_tokens,
     )
 
-    response.raise_for_status()
-
-    return response.json()["response"]
+    return response.choices[0].message.content.strip()
 
 # Construction du chemin du fichier JSON de produits.
 # __file__ correspond au chemin de ce fichier Python.
@@ -268,7 +285,38 @@ def generate_newsletter(interests: list[str]) -> str:
                    "Conseils : Découvrez nos astuces et nos conseils.\n"
                    "Promotions : Offres spéciales réservées aux abonnés"
         )
+    use_openai = toggle("USE_OPENAI_TEXT", False)
+    has_key = bool(os.getenv("OPENAI_API_KEY"))
+    print(f"[Newsletter] Debug -> USE_OPENAI_TEXT={use_openai}, KEY={'set' if has_key else 'missing'}")
+
+    # Si OpenAI est activé et clé pas présente
+    if use_openai and not has_key:
+        print("[Newsletter] ATTENTION: OPENAI_API_KEY manquant -> fallback local")
+
+    # Si OpenAI est activé et clé présente
+    if use_openai and has_key:
+        try:
+            print("[Newsletter] Provider=OpenAI")
+            client = _get_openai()
+            response = client.chat.completions.create(
+                model=_openai_text_model(),
+                messages=[
+                    {"role": "system", "content": "Tu écris en français, structuré, clair et utile."},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=512,
+                temperature=0.7,
+                timeout=15,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"[Newsletter] OpenAI error, fallback local: {e}")
+
+
     # Sinon on appelle le LLM
+    print(f"[Newsletter] Provider=Local Llama")
     result = ask_llm(prompt, max_tokens=512)
     return result.strip()
+
+
 

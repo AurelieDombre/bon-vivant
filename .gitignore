@@ -1,6 +1,9 @@
 .venv/ 
 backend/.venv/
 backend/data/vosk-model-small-en-us-0.15
+backend/.env
+/backend/.env
+*.env
 node_modules/ 
 frontend/node_modules/ 
 data/raw/ 

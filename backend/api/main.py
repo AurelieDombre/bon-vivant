@@ -37,12 +37,17 @@ from core.llm_client import LLMClient
 from core.services import analyze_sentiment, get_product_info, get_upsell, generate_newsletter
 from core.vision_client import analyze_image
 from core.voice_service import USE_DEMO_VOICE, speak_text, transcribe_audio
-
+from pathlib import Path
+from dotenv import load_dotenv
 
 origins = [
     "http://localhost:5173",
     'http://localhost:8000'
 ]
+
+ENV_PATH = (Path(__file__).resolve().parent.parent / ".env")
+load_dotenv(dotenv_path=ENV_PATH, override=True)
+print(f"[ENV] Loaded={ENV_PATH.exists()} path={ENV_PATH}")
 
 # Creation de l'application FastAPI.
 # C'est cet objet `app` que uvicorn charge pour lancer le backend.
